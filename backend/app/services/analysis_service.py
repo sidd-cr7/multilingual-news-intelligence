@@ -116,7 +116,7 @@ def analyse_article(raw_text: str, settings: Settings, detector: LanguageDetecto
     total_positive = total_negative = 0
     if lexicon:
         for sentence in sentences:
-            tokens = {w.casefold().strip(".,!?;:\"'()[]{}") for w in TOKEN_RE.finditer(sentence.text)}
+            tokens = {match.group().casefold().strip(".,!?;:\"'()[]{}") for match in TOKEN_RE.finditer(sentence.text)}
             positive, negative = len(tokens & lexicon["positive"]), len(tokens & lexicon["negative"])
             total_positive += positive; total_negative += negative
             label = "positive" if positive > negative else "negative" if negative > positive else "neutral"

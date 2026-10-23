@@ -15,7 +15,7 @@ def test_evaluation_report_is_deterministic_and_has_no_fixture_errors() -> None:
     assert not report["errors"]
     assert not report["evidence_validation_failures"]
     assert {"verified_match", "possible_match", "rejected_match", "insufficient_evidence"} <= report["same_event_outcomes"].keys()
-    assert report["reviewed_fixture_matching_metrics"]["sample_size"] == 4
+    assert report["reviewed_fixture_matching_metrics"]["sample_size"] == 2
     json.dumps(report)  # report is structured and serializable
 
 

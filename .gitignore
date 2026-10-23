@@ -1,12 +1,15 @@
 .env
+.env.local
 .venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
 frontend/node_modules/
 frontend/.next/
+frontend/next-env.d.ts
 backend/.coverage
 backend/.mypy_cache/
+backend/evaluation-report.json
 *.log
 *.xlsx
 *.xls

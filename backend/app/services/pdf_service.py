@@ -1,4 +1,4 @@
-import fitz
+import pymupdf as fitz
 from app.config import Settings
 from app.services.errors import IngestionError
 

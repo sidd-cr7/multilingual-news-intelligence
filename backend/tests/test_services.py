@@ -1,4 +1,4 @@
-import fitz
+import pymupdf as fitz
 import pytest
 from app.config import Settings
 from app.services.article_service import create_analysis
