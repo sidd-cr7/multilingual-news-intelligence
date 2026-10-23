@@ -28,3 +28,11 @@ def test_same_event_verification_is_transparent() -> None:
     assert status in {"verified_match", "possible_match"} and score > 0 and reasons and not uncertainty
     status, _, _, uncertainty = verify_event(original(), "Unrelated sports update", None)
     assert status == "insufficient_evidence" and uncertainty
+
+
+def test_date_conflict_is_an_explicit_rejected_match() -> None:
+    status, _, _, uncertainty = verify_event(
+        original(), "Delhi flooding update", "Flooding caused a crisis in Delhi on 13 March 2025."
+    )
+    assert status == "rejected_match"
+    assert any("date conflict" in item.lower() for item in uncertainty)

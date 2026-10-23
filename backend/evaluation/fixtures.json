@@ -1,0 +1,17 @@
+{
+  "notes": "These small, manually reviewed examples test deterministic application behaviour. They are not a representative news benchmark or an estimate of real-world model performance.",
+  "analysis_cases": [
+    {"id": "en-evidence", "language": "en", "text": "Maya Rao said the shocking crisis was caused by poor planning on 12 March 2025.", "expect_indicator": "loaded_or_evaluative_language"},
+    {"id": "hi-evidence", "language": "hi", "text": "यह संकट पर पर्याप्त लंबा समाचार लेख है जिसमें जिम्मेदार लोगों का उल्लेख है।", "expect_indicator": "attribution_of_responsibility"},
+    {"id": "kn-availability", "language": "kn", "text": "ಇದು ಸಂಕಟದ ಬಗ್ಗೆ ಸಾಕಷ್ಟು ಉದ್ದವಾದ ಸುದ್ದಿ ಲೇಖನವಾಗಿದೆ ಮತ್ತು ಕಾರಣವನ್ನು ವಿವರಿಸುತ್ತದೆ.", "expect_sentiment": "available"},
+    {"id": "te-availability", "language": "te", "text": "ఇది సంక్షోభం గురించి తగినంత పొడవైన వార్తా కథనం మరియు కారణాన్ని వివరిస్తుంది.", "expect_sentiment": "available"},
+    {"id": "ta-availability", "language": "ta", "text": "இது நெருக்கடி பற்றிய போதுமான நீளமான செய்திக் கட்டுரை மற்றும் காரணத்தை விளக்குகிறது.", "expect_sentiment": "available"},
+    {"id": "unsupported-script", "text": "Пример достаточно длинной статьи для проверки недоступных языковых задач.", "expect_sentiment": "unsupported"}
+  ],
+  "comparison_cases": [
+    {"id": "verified-full-text", "title": "Maya Rao on Delhi flooding", "text": "Maya Rao said flooding caused a crisis in Delhi on 12 March 2025.", "candidate_title": "Delhi flooding: Maya Rao response", "candidate_text": "Maya Rao said flooding caused a crisis in Delhi on 12 March 2025.", "expected": "verified_match"},
+    {"id": "date-conflict", "title": "Delhi flooding", "text": "Flooding caused a crisis in Delhi on 12 March 2025.", "candidate_title": "Delhi flooding update", "candidate_text": "Flooding caused a crisis in Delhi on 13 March 2025.", "expected": "rejected_match"},
+    {"id": "snippet-only", "title": "Delhi flooding", "text": "Flooding caused a crisis in Delhi on 12 March 2025.", "candidate_title": "Delhi flooding report", "candidate_text": null, "expected": "possible_match"},
+    {"id": "unrelated", "title": "Delhi flooding", "text": "Flooding caused a crisis in Delhi on 12 March 2025.", "candidate_title": "Unrelated sports update", "candidate_text": null, "expected": "insufficient_evidence"}
+  ]
+}

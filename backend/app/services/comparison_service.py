@@ -15,8 +15,12 @@ from app.services.errors import IngestionError
 from app.services.language_service import LanguageDetector
 from app.services.url_service import fetch_article
 
-WORD_RE = re.compile(r"[w']+", re.UNICODE)
+WORD_RE = re.compile(r"\w+", re.UNICODE)
 STOP = {"the", "and", "for", "with", "that", "this", "from", "was", "were", "are", "has", "have"}
+DATE_TOKEN_RE = re.compile(
+    r"\b(?:\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|(?:jan(?:uary)?|feb(?:ruary)?|march|april|may|june|july|august|sept(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}(?:,?\s*\d{4})?|\d{1,2}\s+(?:jan(?:uary)?|feb(?:ruary)?|march|april|may|june|july|august|sept(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?:\s+\d{4})?)\b",
+    re.IGNORECASE,
+)
 
 
 def keywords(analysis: ArticleAnalysisResponse, limit: int = 6) -> list[str]:
@@ -82,8 +86,21 @@ def verify_event(original: ArticleAnalysisResponse, title: str, available_text: 
     overlap = len(candidate_terms & source_terms)
     score = min(1.0, (len(shared) * 0.2) + (overlap * 0.08))
     reasons = ([f"Shared event terms: {', '.join(shared[:3])}."] if shared else []) + ([f"Keyword overlap: {overlap}."] if overlap else [])
+    original_dates = {value.casefold() for value in DATE_TOKEN_RE.findall(original.original_text)}
+    candidate_dates = {value.casefold() for value in DATE_TOKEN_RE.findall(f"{title} {available_text or ''}")}
+    date_conflict = bool(original_dates and candidate_dates and original_dates.isdisjoint(candidate_dates))
     uncertainty = [] if available_text else ["Only title/snippet was available; no full-text event verification."]
-    status = "verified_match" if score >= 0.45 and available_text else "possible_match" if score >= 0.2 else "insufficient_evidence"
+    if date_conflict:
+        status = "rejected_match"
+        uncertainty.append("Explicit date conflict between the original and candidate text.")
+    elif score >= 0.45 and available_text:
+        status = "verified_match"
+    elif score >= 0.2:
+        status = "possible_match"
+    elif score > 0 and available_text:
+        status = "rejected_match"
+    else:
+        status = "insufficient_evidence"
     return status, round(score, 2), reasons, uncertainty
 
 
@@ -94,7 +111,7 @@ def comparative_summary(original: ArticleAnalysisResponse, candidates: list[Disc
     for analysis in analyses:
         category_counts.update(analysis.statistics.get("indicator_counts", {}))
     languages = sorted({candidate.language.code for candidate in matched if candidate.language})
-    return {"coverage": {"discovered_articles": len(candidates), "matched_articles": len(matched), "languages_represented": languages, "sources_represented": sorted({item.source_name for item in matched if item.source_name}), "full_text_articles": sum(item.analysis_scope == "full_text" for item in matched), "snippet_only_articles": sum(item.analysis_scope == "snippet_only" for item in matched)}, "indicator_counts_across_matches": dict(category_counts), "observation": "Counts compare observable cues in available text only; they are not bias scores or source-quality judgments."}
+    return {"coverage": {"discovered_articles": len(candidates), "matched_articles": len(matched), "languages_represented": languages, "sources_represented": sorted({item.source_name for item in matched if item.source_name}), "full_text_articles": sum(item.analysis_scope == "full_text" for item in matched), "snippet_only_articles": sum(item.analysis_scope == "snippet_only" for item in matched), "verification_outcomes": dict(Counter(item.verification_status for item in candidates)), "retrieval_outcomes": dict(Counter(item.analysis_scope for item in candidates))}, "indicator_counts_across_matches": dict(category_counts), "observation": "Counts compare observable cues in available text only; they are not bias scores or source-quality judgments."}
 
 
 async def compare_article(text: str, title: str | None, original_url: str | None, options: ComparisonSettings, settings: Settings, detector: LanguageDetector) -> ComparisonResponse:

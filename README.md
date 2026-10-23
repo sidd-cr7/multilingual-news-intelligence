@@ -79,3 +79,39 @@ No OCR, translation, persistence, model training, paid APIs, cross-language disc
 Candidates are never assumed to be the same event. A transparent rule combines shared event terms and keyword overlap to yield `verified_match`, `possible_match`, or `insufficient_evidence`; the score is a relevance signal, not a probability. Full text is fetched only through the existing safe URL service and is analyzed by the existing pipeline. Snippet-only and metadata-only results are explicitly scoped and never represented as full-article analysis. Comparison coverage reports languages, sources, full-text/snippet counts, and aggregate observable-indicator counts, not source or language bias.
 
 Set `DISCOVERY_RESULT_LIMIT` and `DISCOVERY_TIMEOUT_SECONDS` in `.env` to bound work. Provider availability, RSS formats, paywalls, robots policies, redirects, and article extraction can limit coverage.
+
+## Phase 5 evaluation and reliability
+
+The repository includes a small deterministic evaluation framework in `backend/evaluation/`. Its manually reviewed fixtures cover the five supported scripts, exact evidence offsets (including repeated and Indic-script text), availability reporting, verified/possible/rejected/insufficient event outcomes, snippet-only inputs, and provider-style incomplete metadata. It is software evaluation, not a representative corpus or an estimate of real-world framing, sentiment, NER, or event-matching performance. The project does not train on, read, or alter the included spreadsheet artifacts.
+
+Run it from `backend` after installing the backend requirements:
+
+```powershell
+python -m evaluation.run --output evaluation-report.json
+```
+
+The generated JSON records case counts, skips, exact-span failures, outcome counts, per-language coverage, feature availability, errors, and limitations. Its precision/recall/F1, when present, is explicitly limited to the small reviewed matching fixtures; the sample size appears in the report and the metric must not be generalized to live news discovery.
+
+Evidence offsets are zero-based Unicode character offsets with an exclusive `end`, so `original_text[start:end] == quote` must always hold. Invalid, empty, truncated, malformed, or altered evidence is rejected rather than repaired. Comparison relevance is an uncalibrated rule signal, never a probability. A date conflict is reported as `rejected_match`; absence of enough information is `insufficient_evidence`.
+
+### Reproducible checks
+
+```powershell
+# Backend
+py -3.11 -m venv backend\.venv
+backend\.venv\Scripts\Activate.ps1
+python -m pip install -r backend\requirements.txt
+cd backend
+python -m pytest
+python -m evaluation.run --output evaluation-report.json
+uvicorn app.main:app --reload --port 8000
+
+# Frontend (separate shell)
+cd frontend
+npm.cmd install
+npm.cmd run lint
+npm.cmd run build
+npm.cmd run dev
+```
+
+Normal tests and evaluation fixtures make no live provider calls. Live discovery remains bounded by configured timeouts and result limits, but it cannot guarantee comprehensive retrieval, access to paywalled pages, or correct identification of every same-event article.
