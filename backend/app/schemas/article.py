@@ -105,3 +105,39 @@ class ArticleAnalysisResponse(BaseModel):
     task_availability: list[TaskAvailability]
     limitations: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+
+
+class ComparisonSettings(BaseModel):
+    target_languages: list[str] = Field(default_factory=lambda: ["en", "hi", "kn", "te", "ta"])
+    result_limit: int = Field(default=3, ge=1, le=10)
+    include_original_language: bool = False
+
+
+class CompareArticleRequest(ArticleAnalysisRequest):
+    settings: ComparisonSettings = Field(default_factory=ComparisonSettings)
+
+
+class DiscoveryCandidate(BaseModel):
+    url: str
+    title: str
+    source_name: str | None = None
+    published_at: str | None = None
+    snippet: str | None = None
+    provider: str
+    language: LanguageResult | None = None
+    retrieval_status: str
+    analysis_scope: str
+    verification_status: str
+    relevance_score: float | None = None
+    match_reasons: list[str] = Field(default_factory=list)
+    uncertainty: list[str] = Field(default_factory=list)
+    analysis: ArticleAnalysisResponse | None = None
+
+
+class ComparisonResponse(BaseModel):
+    original_analysis: ArticleAnalysisResponse
+    discovery_queries: dict[str, str]
+    candidates: list[DiscoveryCandidate]
+    comparison: dict
+    provider_failures: list[str] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)

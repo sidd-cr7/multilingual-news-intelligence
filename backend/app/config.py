@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:3000"
     fasttext_model_path: str | None = None
     max_analysis_sentences: int = 500
+    discovery_result_limit: int = 5
+    discovery_timeout_seconds: float = 8.0
 
     @property
     def origins(self) -> list[str]:

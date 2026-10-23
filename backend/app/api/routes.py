@@ -1,7 +1,8 @@
 from fastapi import APIRouter, File, UploadFile
 from app.config import get_settings
-from app.schemas.article import ArticleAnalysisRequest, ArticleAnalysisResponse, ArticleMetadata, TextRequest, UrlRequest
+from app.schemas.article import ArticleAnalysisRequest, ArticleAnalysisResponse, ArticleMetadata, CompareArticleRequest, ComparisonResponse, TextRequest, UrlRequest
 from app.services.analysis_service import analyse_article
+from app.services.comparison_service import compare_article
 from app.services.article_service import create_analysis
 from app.services.errors import IngestionError
 from app.services.language_service import LanguageDetector
@@ -27,6 +28,11 @@ async def analyze_text(payload: TextRequest) -> ArticleMetadata:
 async def analyze_article(payload: ArticleAnalysisRequest) -> ArticleAnalysisResponse:
     settings = get_settings()
     return analyse_article(payload.text, settings, detector(), payload.title, payload.original_url)
+
+@router.post("/compare/article", response_model=ComparisonResponse)
+async def compare_coverage(payload: CompareArticleRequest) -> ComparisonResponse:
+    settings = get_settings()
+    return await compare_article(payload.text, payload.title, payload.original_url, payload.settings, settings, detector())
 
 @router.post("/analyze/pdf", response_model=ArticleMetadata)
 async def analyze_pdf(file: UploadFile = File(...)) -> ArticleMetadata:

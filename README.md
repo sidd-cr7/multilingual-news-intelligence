@@ -50,6 +50,12 @@ No model weights are downloaded at startup. The core pipeline uses deterministic
 
 Language identification reuses Phase 1's script detector for Hindi/Kannada/Telugu/Tamil and `langdetect` fallback for other text. An optional locally supplied fastText language-ID model may be used when configured. Consult the upstream licenses before redistribution (`langdetect` is Apache-2.0; fastText is MIT); this repository includes neither model weights nor a new pretrained NLP model.
 
+## Phase 3 indicator report
+
+`POST /api/analyze/article` remains backward compatible and now also returns a statistical report in `statistics`. It contains raw counts by indicator, sentence/token counts, sentence-level lexical sentiment distribution where supported, and `evidence_density_per_1000_tokens`. Tokens are non-empty whitespace-delimited sequences in the original normalized text; density is raw evidence spans ÷ token count × 1,000. Neither counts nor rates are bias scores.
+
+The indicator registry provides observable cues for attributed claims, unattributed assertion candidates, responsibility/agency language, hedging, absolutist/generalising language, loaded/evaluative wording, and a narrowly defined potentially-one-sided cue (evaluative wording in an un-attributed sentence). Every cue has an exact Unicode offset and direct quote. Invalid spans fail validation in the backend; the UI additionally refuses to highlight a span unless it exactly slices the displayed original text. These rules support English, Hindi, Kannada, Telugu, and Tamil with deliberately compact lexicons, so contextual nuance, quotations, and language variation remain important limitations.
+
 `FASTTEXT_MODEL_PATH` may point to a locally acquired fastText model for language identification. Local models/caches must remain outside version control. The core has modest CPU/RAM needs; optional pretrained models should be installed/configured deliberately and never downloaded during application startup.
 
 For manual evaluation, run representative short articles in each target language; inspect each returned quote against the original text; record false positives/negatives and missing language-specific terms. This validates application behavior, not real-world bias-detection accuracy.
@@ -65,3 +71,11 @@ npm.cmd run build
 ```
 
 No OCR, translation, persistence, model training, paid APIs, cross-language discovery, or automated comparison is included.
+
+## Phase 4 discovery and comparison
+
+`POST /api/compare/article` accepts the same article fields as the analysis endpoint plus `settings.target_languages`, `settings.result_limit` (1–10), and `settings.include_original_language`. It uses public GDELT's document endpoint and Google News RSS without credentials, applies bounded timeouts, deduplicates URLs before retrieval, and records provider failures as partial-result metadata.
+
+Candidates are never assumed to be the same event. A transparent rule combines shared event terms and keyword overlap to yield `verified_match`, `possible_match`, or `insufficient_evidence`; the score is a relevance signal, not a probability. Full text is fetched only through the existing safe URL service and is analyzed by the existing pipeline. Snippet-only and metadata-only results are explicitly scoped and never represented as full-article analysis. Comparison coverage reports languages, sources, full-text/snippet counts, and aggregate observable-indicator counts, not source or language bias.
+
+Set `DISCOVERY_RESULT_LIMIT` and `DISCOVERY_TIMEOUT_SECONDS` in `.env` to bound work. Provider availability, RSS formats, paywalls, robots policies, redirects, and article extraction can limit coverage.
