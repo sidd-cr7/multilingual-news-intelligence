@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     max_redirects: int = 3
     cors_origins: str = "http://localhost:3000"
     fasttext_model_path: str | None = None
+    max_analysis_sentences: int = 500
 
     @property
     def origins(self) -> list[str]:

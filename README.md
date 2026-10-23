@@ -1,78 +1,67 @@
-# Multilingual News Intelligence — Phase 1
+# Multilingual News Intelligence — Phase 2
 
-An ingestion foundation for an explainable multilingual news-framing and bias research application. Phase 1 extracts article text from pasted text, public web pages, or text-based PDFs and detects its language. It deliberately does **not** claim to perform framing, bias, sentiment, NER, comparison, search, or reporting.
+An evidence-first multilingual news-analysis application. It accepts pasted text, a public article URL, or a text-based PDF; preserves original-language text; and returns transparent linguistic and framing cues. It does not claim to determine political bias, deception, manipulation, or author intent.
 
-## Current capabilities
+## Capabilities
 
-- English, Hindi, Kannada, Telugu, and Tamil recognition (with unsupported-language reporting).
-- Text normalization, character/token/paragraph counts, timestamps, and transparent metadata.
-- PDF extraction using PyMuPDF, with clear errors for encrypted, damaged, scanned, or textless files.
-- Secure URL intake: HTTP(S) validation, public-address checks, DNS rechecks on redirects, timeouts, response-size and redirect limits, and HTML-only article extraction.
-- Responsive Next.js dashboard with loading, validation, error, result, and reset states.
+- Phase 1 ingestion for text, public HTTP(S) URLs, and text PDFs, with English, Hindi, Kannada, Telugu, and Tamil language identification.
+- `POST /api/analyze/article` for sentence and token counts, rule-based entity candidates, lexical sentiment, limited emotion cues, and exact original-text evidence spans.
+- Explainable heuristic indicators for source attribution, attribution of responsibility/cause, and loaded or evaluative language.
+- A responsive Next.js dashboard that chains ingestion into analysis and highlights only evidence spans that exactly match the original text.
+- Per-task availability and limitations. POS tagging and pretrained multilingual NER are explicitly unavailable rather than simulated.
 
-## Project structure
+The spreadsheet artifacts in this repository are preserved and are neither read nor used as training data.
 
-```text
-backend/app/api/       HTTP routes
-backend/app/services/  input, extraction, language, and metadata services
-backend/app/schemas/   request and response contracts
-backend/tests/         API and service tests
-frontend/app/          Next.js interface
-docs/                  architecture notes
-```
+## Setup
 
-The existing `NLP 100.xlsx`, `nlp 20 events.xlsx`, `nlp 30.xlsx`, and `nlp 60.xlsx` are preserved research artifacts. They are not read or used by the application.
-
-## Prerequisites
-
-- Python 3.11+ (the operating system must permit executing its Python launcher)
-- Node.js 20+ and npm
-
-## Install and run (Windows PowerShell)
-
-From the project root:
+Prerequisites: Python 3.11+ and Node.js 20+.
 
 ```powershell
-py -3.11 -m venv .venv
-.\.venv\Scripts\Activate.ps1
+py -3.11 -m venv backend\.venv
+backend\.venv\Scripts\Activate.ps1
 python -m pip install -r backend\requirements.txt
 Copy-Item .env.example .env
 cd backend
 uvicorn app.main:app --reload --port 8000
 ```
 
-Open a second PowerShell window:
+In another PowerShell window:
 
 ```powershell
-cd "C:\Users\l\OneDrive\Documents\PROJECTS\NLP PROJECT\frontend"
+cd frontend
 Copy-Item .env.local.example .env.local
 npm.cmd install
 npm.cmd run dev
 ```
 
-Visit `http://localhost:3000`; API health is `http://localhost:8000/api/health`.
+Open `http://localhost:3000`; health is at `http://localhost:8000/api/health`.
 
-If PowerShell cannot run an activation script, invoke the environment directly instead:
+## API example
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8000
+Invoke-RestMethod http://localhost:8000/api/analyze/article -Method Post -ContentType 'application/json' -Body '{"text":"Officials said the shocking crisis was caused by poor planning."}'
 ```
 
-## Configuration
+The response contains original text and language, linguistic counts, entities, sentiment/emotion, heuristic indicators with `quote`, `start`, and `end`, statistics, availability, warnings, and limitations. Offsets are Unicode character positions in `original_text`.
 
-Copy `.env.example` to `.env`. It contains safe defaults for upload/text/response limits, CORS, and timeouts. `FASTTEXT_MODEL_PATH` is optional: point it to a locally acquired `lid.176.bin` model to use fastText. Install `backend\requirements-fasttext.txt` only on a compatible Python/toolchain, then set that path. Without it, the API uses its fallback language detector. No keys are required or included.
+## Methods, coverage, and limitations
 
-## Tests and checks
+No model weights are downloaded at startup. The core pipeline uses deterministic punctuation/token rules and compact inspectable lexicons. Sentiment seed lexicons cover English, Hindi, Kannada, Telugu, and Tamil. Emotion is a limited English lexicon. Entity extraction is limited to dates and conservative English person candidates. These are not calibrated pretrained-model predictions and negative sentiment is never equated with bias.
+
+Language identification reuses Phase 1's script detector for Hindi/Kannada/Telugu/Tamil and `langdetect` fallback for other text. An optional locally supplied fastText language-ID model may be used when configured. Consult the upstream licenses before redistribution (`langdetect` is Apache-2.0; fastText is MIT); this repository includes neither model weights nor a new pretrained NLP model.
+
+`FASTTEXT_MODEL_PATH` may point to a locally acquired fastText model for language identification. Local models/caches must remain outside version control. The core has modest CPU/RAM needs; optional pretrained models should be installed/configured deliberately and never downloaded during application startup.
+
+For manual evaluation, run representative short articles in each target language; inspect each returned quote against the original text; record false positives/negatives and missing language-specific terms. This validates application behavior, not real-world bias-detection accuracy.
+
+## Tests
 
 ```powershell
 cd backend
-..\.venv\Scripts\python.exe -m pytest
+.\.venv\Scripts\python.exe -m pytest
 cd ..\frontend
 npm.cmd run lint
 npm.cmd run build
 ```
 
-## Limitations and roadmap
-
-No OCR, translation, persistence, login, model training, Google News/GDELT retrieval, or cross-language matching is in this phase. Future modules will add POS/NER, framing/bias indicators, sentiment/emotion, psychological/media-framing concepts, evidence explanations, discovery/comparison, and reports/visualizations.
+No OCR, translation, persistence, model training, paid APIs, cross-language discovery, or automated comparison is included.

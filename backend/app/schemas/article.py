@@ -13,6 +13,13 @@ class TextRequest(BaseModel):
     text: str = Field(min_length=1)
 
 
+class ArticleAnalysisRequest(BaseModel):
+    """Article text is always analysed in its original language; it is never translated."""
+    text: str = Field(min_length=1)
+    title: str | None = Field(default=None, max_length=500)
+    original_url: str | None = Field(default=None, max_length=2_000)
+
+
 class UrlRequest(BaseModel):
     url: HttpUrl
 
@@ -43,3 +50,58 @@ class ArticleMetadata(BaseModel):
 
 class ErrorResponse(BaseModel):
     detail: str
+
+
+class TaskAvailability(BaseModel):
+    task: str
+    status: str
+    method: str | None = None
+    supported_languages: list[str] = Field(default_factory=list)
+    limitation: str | None = None
+
+
+class EvidenceSpan(BaseModel):
+    category: str
+    quote: str
+    start: int = Field(ge=0)
+    end: int = Field(ge=0)
+    context: str
+    explanation: str
+    method: str
+    confidence: float | None = None
+    uncertainty: str | None = None
+
+
+class Entity(BaseModel):
+    text: str
+    label: str
+    start: int = Field(ge=0)
+    end: int = Field(ge=0)
+    method: str
+    confidence: float | None = None
+
+
+class SentenceSentiment(BaseModel):
+    text: str
+    start: int = Field(ge=0)
+    end: int = Field(ge=0)
+    label: str
+    score: float | None = None
+    method: str
+
+
+class ArticleAnalysisResponse(BaseModel):
+    analysis_id: str
+    title: str | None = None
+    original_url: str | None = None
+    original_text: str
+    language: LanguageResult
+    linguistic: dict
+    entities: list[Entity]
+    sentiment: dict
+    emotion: dict
+    indicators: list[EvidenceSpan]
+    statistics: dict
+    task_availability: list[TaskAvailability]
+    limitations: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)

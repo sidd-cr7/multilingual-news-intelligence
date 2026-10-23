@@ -1,14 +1,21 @@
-# Phase 1 Architecture
+# Phase 2 Architecture
 
-The browser-facing Next.js application (`frontend/`) submits exactly one source type to the FastAPI service (`backend/`). The API does not persist articles in Phase 1.
+The browser-facing Next.js application submits one source type to the FastAPI service. Articles are not persisted.
 
 ```text
-Text / URL / PDF → FastAPI ingestion route → extraction & normalization
-                                      └── language identification → metadata JSON → Next.js results view
+Text / URL / PDF → ingestion route → extraction & normalization → language + metadata
+                                                              ↓
+Dashboard ← structured response ← POST /api/analyze/article ← analysis service
+                                                       ↓
+segment/tokenize + lexical sentiment/emotion + entity rules + indicator registry
+                                                       ↓
+                   exact original-text evidence spans, availability, limitations
 ```
 
-Each input route delegates to a small service. `article_service` owns the shared metadata workflow; extraction, language detection, future analysis, discovery, comparison, and reporting remain independently replaceable modules.
+The Phase 1 ingestion routes remain responsible for safe URL/PDF/text extraction. The dashboard then passes their `extracted_text` to the analysis endpoint, preserving paste, URL, and PDF workflows.
 
-URL retrieval resolves every target hostname before each request/redirect and blocks non-global addresses. It uses a bounded streamed response, a timeout, a redirect limit, supported HTML content types, and Trafilatura only for readable-text extraction. It does not circumvent paywalls or authentication.
+`analysis_service` never translates input. It uses punctuation-based segmentation, whitespace tokenization, small inspectable language lexicons, conservative English date/person-candidate rules, and evidence helpers. Evidence quotes are direct slices of `original_text` using returned Unicode character offsets.
 
-Language detection first identifies the Indic scripts deterministically. For other text, it loads fastText if `FASTTEXT_MODEL_PATH` points to a locally supplied model, otherwise it uses `langdetect`. Confidence is reported only from a detector that supplies it.
+Every analysis response includes per-task availability. POS tagging and pretrained multilingual NER are marked unavailable until a locally configured model integration exists; no output is fabricated. The available framing cues identify observable source-attribution, responsibility/causation, and loaded/evaluative wording. They are heuristic evidence—not findings of author intent, political bias, deception, or manipulation.
+
+The existing URL service resolves every hostname before each request/redirect, blocks non-global addresses, bounds response sizes, and extracts readable HTML only. It does not bypass paywalls or authentication.
