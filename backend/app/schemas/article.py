@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 
 
 class InputMethod(str, Enum):
@@ -37,6 +37,7 @@ class ArticleMetadata(BaseModel):
     input_method: InputMethod
     original_url: str | None = None
     title: str | None = None
+    title_source: str | None = None
     language: LanguageResult
     extracted_text: str
     character_count: int
@@ -61,6 +62,13 @@ class TaskAvailability(BaseModel):
 
 
 class EvidenceSpan(BaseModel):
+    """One distinct observable cue, anchored on its first occurrence.
+
+    ``quote``/``start``/``end`` always describe the anchor occurrence exactly as
+    it appears in the original text. ``occurrence_spans`` lists every occurrence
+    of the same cue so repeated wording is reported once with a count instead of
+    being counted as an independent finding.
+    """
     category: str
     quote: str
     start: int = Field(ge=0)
@@ -70,6 +78,11 @@ class EvidenceSpan(BaseModel):
     method: str
     confidence: float | None = None
     uncertainty: str | None = None
+    cue: str | None = None
+    occurrences: int = Field(default=1, ge=1)
+    occurrence_spans: list[tuple[int, int]] = Field(default_factory=list)
+    contexts: list[str] = Field(default_factory=list)
+    evidence_strength: str | None = None
 
 
 class Entity(BaseModel):
@@ -93,6 +106,7 @@ class SentenceSentiment(BaseModel):
 class ArticleAnalysisResponse(BaseModel):
     analysis_id: str
     title: str | None = None
+    title_source: str | None = None
     original_url: str | None = None
     original_text: str
     language: LanguageResult
@@ -100,6 +114,8 @@ class ArticleAnalysisResponse(BaseModel):
     entities: list[Entity]
     sentiment: dict
     emotion: dict
+    framing_analysis: dict = Field(default_factory=dict)
+    summary: dict = Field(default_factory=lambda: {"status": "unavailable", "method": None, "text": None, "limitation": "No summary was supplied."})
     indicators: list[EvidenceSpan]
     statistics: dict
     task_availability: list[TaskAvailability]
@@ -140,4 +156,43 @@ class ComparisonResponse(BaseModel):
     candidates: list[DiscoveryCandidate]
     comparison: dict
     provider_failures: list[str] = Field(default_factory=list)
+    provider_status: dict[str, str] = Field(default_factory=dict)
     limitations: list[str] = Field(default_factory=list)
+
+
+class ReportRequest(BaseModel):
+    """Request body for PDF report generation.
+
+    Pass the analysis result already obtained from /api/analyze/article.
+    Optionally include comparison results from /api/compare/article.
+    The report is generated from these results without re-running analysis.
+    """
+    model_config = ConfigDict(extra="forbid")
+    analysis: ArticleAnalysisResponse
+    comparison: ComparisonResponse | None = None
+
+    @model_validator(mode="after")
+    def enforce_report_bounds_and_evidence(self) -> "ReportRequest":
+        if not self.analysis.original_text.strip():
+            raise ValueError("Report article text cannot be empty.")
+        if len(self.analysis.original_text) > 100_000:
+            raise ValueError("Report article text exceeds the 100,000-character limit.")
+        if len(self.analysis.indicators) > 5_000:
+            raise ValueError("Report evidence exceeds the 5,000-item limit.")
+        if self.comparison and len(self.comparison.candidates) > 100:
+            raise ValueError("Report comparison exceeds the 100-candidate limit.")
+        if (
+            self.comparison
+            and self.comparison.original_analysis.original_text != self.analysis.original_text
+        ):
+            raise ValueError("Comparison results must refer to the report article text.")
+        if len(self.model_dump_json().encode("utf-8")) > 5 * 1024 * 1024:
+            raise ValueError("Report request exceeds the 5 MB limit.")
+
+        for evidence in self.analysis.indicators:
+            if (
+                not 0 <= evidence.start < evidence.end <= len(self.analysis.original_text)
+                or self.analysis.original_text[evidence.start:evidence.end] != evidence.quote
+            ):
+                raise ValueError("Report evidence must exactly match the original article text.")
+        return self

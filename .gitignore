@@ -10,6 +10,7 @@ frontend/next-env.d.ts
 backend/.coverage
 backend/.mypy_cache/
 backend/evaluation-report.json
+backend/tmp/
 *.log
 *.xlsx
 *.xls
