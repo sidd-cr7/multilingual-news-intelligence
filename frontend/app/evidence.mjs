@@ -41,7 +41,7 @@ export function highlightRanges(evidence, text) {
       accepted.push({ start, end, key: `${start}-${end}` });
     }
   }
-  accepted.sort((a, b) => a.start - b.start || a.end - b.end);
+  accepted.sort((a, b) => a.start - b.start || b.end - a.end);
   const ranges = [];
   let cursor = 0;
   for (const range of accepted) {

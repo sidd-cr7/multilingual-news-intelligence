@@ -201,6 +201,19 @@ def _safe_source_url(value: str | None) -> str:
     return urlunsplit((parts.scheme.lower(), netloc, parts.path, "", ""))
 
 
+def _break_long_token(value: str, size: int = 48) -> str:
+    """Insert invisible break opportunities into an overlong unbroken token.
+
+    PyMuPDF's Story renderer clips a token wider than the text column instead of
+    breaking it, which silently dropped the tail of long candidate URLs. Zero-width
+    spaces keep every visible character while allowing the token to wrap. Short
+    URLs that already fit are left untouched so their text stays verbatim.
+    """
+    if len(value) <= 72:
+        return value
+    return "\u200b".join(value[index:index + size] for index in range(0, len(value), size))
+
+
 def _noto_css() -> tuple[str, pymupdf.Archive]:
     """Return CSS and Archive for Noto Sans (covers Latin, Devanagari, Kannada)."""
     archive = pymupdf.Archive()
@@ -241,8 +254,110 @@ def _kv_table(rows: list[tuple[str, str]]) -> str:
 
 
 def _avail_span(status: str) -> str:
-    cls = {"available": "avail-ok", "partial": "avail-partial"}.get(status, "avail-no")
+    cls = {
+        "available": "avail-ok",
+        "available_with_limitations": "avail-partial",
+        "partial": "avail-partial",
+    }.get(status, "avail-no")
     return f"<span class='{cls}'>{_e(status)}</span>"
+
+
+_CATEGORY_LABELS = {
+    "loaded_or_evaluative_language": "Loaded or evaluative language",
+    "attribution_of_responsibility": "Attribution of responsibility",
+    "attributed_claim": "Attributed claim",
+    "hedging_or_qualification": "Hedging or qualification",
+    "absolutist_or_generalising_language": "Absolutist or generalising language",
+    "attributed": "Attributed",
+    "unattributed": "Unattributed",
+    "attribution_marker": "Attribution marker",
+    "mixed": "Mixed attribution",
+}
+
+
+def _label(value: str | None) -> str:
+    if not value:
+        return "Not reported"
+    return _CATEGORY_LABELS.get(value, value.replace("_", " ").capitalize())
+
+
+def _executive_summary(analysis: ArticleAnalysisResponse, comparison: ComparisonResponse | None) -> str:
+    ling = analysis.linguistic or {}
+    stat = analysis.statistics or {}
+    sentences = ling.get("sentence_count", "N/A")
+    tokens = ling.get("token_count", stat.get("word_count", "N/A"))
+    findings = len(analysis.indicators)
+    occurrences = stat.get("total_cue_occurrences", sum(item.occurrences for item in analysis.indicators))
+    density = stat.get("evidence_density_per_1000_tokens")
+    counts = stat.get("indicator_counts") or {}
+    top = sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:3]
+    parts = [
+        f"This report examines a {_e(analysis.language.name)} article containing approximately "
+        f"{_e(str(sentences))} sentences and {_e(str(tokens))} whitespace tokens."
+    ]
+    if findings:
+        density_text = f" ({_e(str(density))} cue occurrences per 1,000 tokens)" if density is not None else ""
+        parts.append(
+            f"The rule-based engine identified {findings} distinct observable findings covering "
+            f"{occurrences} cue occurrences{density_text}. The most frequent categories were "
+            + ", ".join(f"{_e(_label(category))} ({count})" for category, count in top)
+            + "."
+        )
+    else:
+        parts.append(
+            "No configured indicator cues matched the analysed text. This is not evidence that the article is unbiased or balanced."
+        )
+    claim = stat.get("attribution_summary") or {}
+    if claim:
+        markers = claim.get('attribution_marker_findings', 0)
+        parts.append(
+            "Attribution context was recorded for the anchor sentence of each finding: "
+            f"{_e(str(claim.get('attributed_findings', 0)))} attributed, "
+            f"{_e(str(claim.get('unattributed_findings', 0)))} unattributed, and "
+            f"{_e(str(markers))} attribution-marker finding{'' if markers == 1 else 's'}. "
+            "These are descriptive counts; they are not counts of unique sources and do not measure fairness."
+        )
+    if comparison and comparison.candidates:
+        cov = (comparison.comparison or {}).get("coverage", {})
+        matched = cov.get('matched_articles', 'N/A')
+        parts.append(
+            f"Coverage comparison evaluated {_e(str(cov.get('evaluated_articles', 'N/A')))} of "
+            f"{_e(str(cov.get('discovered_articles', 'N/A')))} discovered candidates; "
+            f"{_e(str(matched))} {'was' if matched == 1 else 'were'} possible or verified "
+            f"match{'' if matched == 1 else 'es'}. "
+            "Wording comparisons are restricted to verified full-text matches."
+        )
+    parts.append(
+        "Every finding is a heuristic observation tied to an exact quotation. The report does not "
+        "establish author intent, deception, or a validated article-level bias verdict. "
+        "A provisional directional-framing indicator may be reported separately when evidence "
+        "meets its stated threshold."
+    )
+    return " ".join(parts)
+
+
+def _methodology_html(analysis: ArticleAnalysisResponse) -> str:
+    methodology = analysis.methodology or {}
+    categories = methodology.get("categories") or {}
+    claim_defs = methodology.get("claim_status") or {}
+
+    def block(title: str, items: dict) -> str:
+        if not items:
+            return ""
+        rows = "".join(f"<li><b>{_e(_label(key))}</b> — {_e(value)}</li>" for key, value in items.items())
+        return f"<h3>{_e(title)}</h3><ul>{rows}</ul>"
+
+    approach = methodology.get("approach")
+    offsets = methodology.get("offsets")
+    interpretation = methodology.get("interpretation")
+    html = f"<p>{_e(approach)}</p>" if approach else ""
+    html += block("Indicator definitions", categories)
+    html += block("Claim-status definitions", claim_defs)
+    if offsets:
+        html += f"<p><b>Offsets:</b> {_e(offsets)}</p>"
+    if interpretation:
+        html += f"<p><b>Interpretation:</b> {_e(interpretation)}</p>"
+    return html or "<p>No methodology metadata was supplied.</p>"
 
 
 def _build_html(
@@ -261,13 +376,15 @@ def _build_html(
         f"<p class='warn'><b>Interpretation guide:</b> Indicators identify "
         f"observable linguistic patterns in the original text. They are not "
         f"proof of author intent, political bias, deception, or manipulation. "
-        f"No article-level bias score is produced.</p>"
+        f"When sufficient validated evidence is available, a provisional directional-framing "
+        f"indicator may be shown; it is not a calibrated probability or validated bias score.</p>"
     )
+    parts.append(_section("Executive Summary", f"<p>{_executive_summary(analysis, comparison)}</p>"))
 
     # ── Article metadata ─────────────────────────────────────────────────────
     meta_rows: list[tuple[str, str]] = [
         ("Title", _e(analysis.title or "Untitled")),
-        ("Source URL", _e(_safe_source_url(analysis.original_url))),
+        ("Source URL", _e(_break_long_token(_safe_source_url(analysis.original_url)))),
         ("Publication date", "Unavailable — no publication date was provided."),
         ("Language", f"{_e(analysis.language.name)} ({_e(analysis.language.code)})"),
         ("Language confidence", _e(f"{analysis.language.confidence:.3f}" if analysis.language.confidence is not None else "N/A (script-based detection)")),
@@ -288,16 +405,7 @@ def _build_html(
         ("POS distribution", _e("Unavailable — no pretrained POS model configured")),
     ]
     parts.append(_section("Linguistic Counts", _kv_table(ling_rows)))
-    summary = analysis.summary
-    if summary.get("status") == "available" and summary.get("text"):
-        summary_html = (
-            f"<p>{_e(str(summary['text']))}</p>"
-            f"<p class='meta'>Method: {_e(str(summary.get('method', 'Not stated')))}. "
-            f"{_e(str(summary.get('limitation', '')))}</p>"
-        )
-    else:
-        summary_html = "<p>No extractive summary was available in the supplied analysis result.</p>"
-    parts.append(_section("Analysis Summary", summary_html))
+    parts.append(_section("Methodology and Indicator Definitions", _methodology_html(analysis)))
 
     # ── Named entities ───────────────────────────────────────────────────────
     entities = analysis.entities
@@ -311,8 +419,8 @@ def _build_html(
         ent_table = (
             "<table><tr><th>Text</th><th>Label</th><th>Offsets</th><th>Method</th></tr>"
             + rows_html + "</table>"
-            "<p class='meta'>Entity extraction is limited to dates and conservative "
-            "English person candidates (rule-based). Not a pretrained multilingual NER model.</p>"
+            "<p class='meta'>Entity methods are shown per candidate. An empty result is not evidence "
+            "that no entities are present; consult task availability for model scope.</p>"
         )
     else:
         entity_status = next(
@@ -327,37 +435,51 @@ def _build_html(
 
     # ── Sentiment ────────────────────────────────────────────────────────────
     sent = analysis.sentiment
-    if sent.get("status") == "available":
+    if sent.get("status") == "available_with_limitations" and sent.get("class_scores"):
+        score_text = ", ".join(
+            f"{_e(label)}: {_e(format(score, '.3f'))}"
+            for label, score in sent["class_scores"].items()
+            if isinstance(score, (int, float))
+        )
         sent_rows: list[tuple[str, str]] = [
-            ("Overall label", _e(sent.get("label", "N/A"))),
-            ("Positive cues", _e(str(sent.get("positive_cues", "Not reported")))),
-            ("Negative cues", _e(str(sent.get("negative_cues", "Not reported")))),
+            ("Model label", _e(sent.get("label") or "Not resolved")),
+            ("Raw mean class scores", score_text or "Not reported"),
+            ("Model", _e(sent.get("model_identifier", "Not reported"))),
             ("Method", _e(sent.get("method", "N/A"))),
         ]
-        dist = stat.get("sentiment_distribution") or {}
-        if dist:
-            dist_str = ", ".join(f"{k}: {v}" for k, v in dist.items())
-            sent_rows.append(("Sentence distribution", _e(dist_str)))
         sent_html = (
             _kv_table(sent_rows)
-            + "<p class='meta'>Lexical cues are uncalibrated heuristics, not model predictions. "
-            "Negative sentiment is never equated with bias.</p>"
+            + f"<p class='meta'>{_e(sent.get('score_note', 'Scores are uncalibrated model outputs.'))} "
+            "Quoted reactions, sarcasm, and speaker attribution are not resolved. Negative sentiment "
+            "is never equated with bias.</p>"
         )
     else:
         status = sent.get("status", "unavailable")
-        sent_html = f"<p>Sentiment analysis: <span class='avail-no'>{_e(status)}</span> for language '{_e(analysis.language.code)}'.</p>"
+        sent_html = (
+            f"<p>Sentiment analysis: {_avail_span(status)} for language "
+            f"'{_e(analysis.language.code)}'. {_e(sent.get('limitation', 'No model prediction is available.'))}</p>"
+        )
     parts.append(_section("Sentiment Analysis", sent_html))
 
     # ── Emotion ──────────────────────────────────────────────────────────────
     emo = analysis.emotion
-    if emo.get("status") in ("available", "partial") and emo.get("distribution"):
-        emo_rows = [(k, _e(str(v))) for k, v in emo["distribution"].items()]
+    if emo.get("status") == "available_with_limitations" and emo.get("distribution"):
+        emo_rows = [
+            (k, _e(f"{v:.3f} raw score"))
+            for k, v in emo["distribution"].items()
+            if isinstance(v, (int, float))
+        ]
         emo_html = (
             _kv_table(emo_rows)
-            + "<p class='meta'>English seed lexicon only. No emotion claim is made for other languages.</p>"
+            + f"<p class='meta'>Model: {_e(emo.get('model_identifier', 'Not reported'))}. "
+            f"{_e(emo.get('score_note', 'Scores are uncalibrated model outputs.'))} "
+            "This is emotion classification, not sentiment or sarcasm detection.</p>"
         )
     else:
-        emo_html = f"<p>Emotion analysis: <span class='avail-no'>{_e(emo.get('status', 'unavailable'))}</span>. English only.</p>"
+        emo_html = (
+            f"<p>Emotion analysis: {_avail_span(emo.get('status', 'unavailable'))}. "
+            f"{_e(emo.get('limitation', 'No model prediction is available.'))}</p>"
+        )
     parts.append(_section("Emotion Analysis", emo_html))
 
     # ── Indicator statistics ─────────────────────────────────────────────────
@@ -434,18 +556,23 @@ def _build_html(
         for cat, items in sorted(by_cat.items()):
             occurrences = sum(item.occurrences for item in items)
             evidence_html += (
-                f"<h3>{_e(cat.replace('_', ' ').title())} "
+                f"<h3>{_e(_label(cat))} "
                 f"({len(items)} {'finding' if len(items) == 1 else 'findings'}, "
                 f"{occurrences} {'occurrence' if occurrences == 1 else 'occurrences'})</h3>"
             )
             for item in items:
                 quote_html = (
-                    "<b>Quote:</b> See Unicode evidence appendix and attached "
-                    "UTF-8 evidence file.<br/>"
+                    "<b>Exact quotation:</b> See the Original Unicode Evidence appendix; "
+                    "the attached UTF-8 file preserves the exact characters.<br/>"
                     if lang_code in _SCRIPT_TAGS
                     else f"<b>Quote:</b> &#8220;{_e(item.quote)}&#8221;<br/>"
                 )
                 context_html = f"<b>Sentence context:</b> {_e(item.context)}<br/>" if item.context else ""
+                claim_html = (
+                    f"<b>Claim status:</b> {_e(_label(item.claim_status))}"
+                    + (f" — {_e(item.claim_status_note)}" if item.claim_status_note else "")
+                    + "<br/>"
+                ) if item.claim_status else ""
                 evidence_html += (
                     f"<div class='quote'>{quote_html}"
                     f"<b>Cue:</b> {_e(item.cue or 'not applicable')} &nbsp; "
@@ -453,13 +580,17 @@ def _build_html(
                     f"<b>Evidence strength:</b> {_e(item.evidence_strength or 'Not stated')}<br/>"
                     f"<b>Offsets:</b> {_e(str(item.start))}–{_e(str(item.end))} &nbsp; "
                     f"<b>Method:</b> {_e(item.method)}<br/>"
+                    f"{claim_html}"
                     f"{context_html}"
                     f"<b>Explanation:</b> {_e(item.explanation)}<br/>"
                     f"<b>Uncertainty:</b> {_e(item.uncertainty or 'None stated')}"
                     f"</div>"
                 )
     else:
-        evidence_html += "<p>No indicator evidence spans were extracted.</p>"
+        evidence_html += (
+            "<p>No configured indicator cues matched the analysed text. "
+            "This is not evidence that the article is unbiased or balanced.</p>"
+        )
     parts.append(_section("Evidence by Indicator Category", evidence_html))
 
     # ── Feature availability ─────────────────────────────────────────────────
@@ -484,6 +615,42 @@ def _build_html(
         lim_items = "<li>No methodological limitations were supplied with this result.</li>"
     parts.append(_section("Methodological Limitations", f"<ul>{lim_items}</ul>"))
 
+    # ── Overall bias and framing judgment ────────────────────────────────────
+    judgment = analysis.overall_judgment
+    if judgment:
+        indicator = (
+            f"{judgment.indicator}/100 ({_e(judgment.indicator_label)})"
+            if judgment.indicator is not None
+            else "Insufficient evidence for a score"
+        )
+        judgment_html = (
+            f"<p><b>Status:</b> {_e(judgment.status)}</p>"
+            f"<p><b>Provisional indicator:</b> {indicator}</p>"
+            f"<p><b>Direction:</b> {_e(judgment.direction.replace('_', ' '))}</p>"
+            f"<p><b>Evidence sufficiency:</b> {_e(judgment.evidence_sufficiency)}</p>"
+            f"<p>{_e(judgment.summary)}</p>"
+        )
+        for reason in judgment.reasons[:5]:
+            judgment_html += (
+                "<div class='quote'>"
+                f"<b>Evidence ({_e(reason.attribution_type.replace('_', ' '))}):</b> "
+                f"{_e(reason.evidence_text)}<br/>"
+                f"<b>Direction:</b> {_e(reason.framing_direction.replace('_', ' '))}<br/>"
+                f"<b>Explanation:</b> {_e(reason.explanation)}"
+                "</div>"
+            )
+        if judgment.limitations:
+            judgment_html += "<ul>" + "".join(
+                f"<li>{_e(limitation)}</li>" for limitation in judgment.limitations
+            ) + "</ul>"
+        judgment_html += (
+            f"<p class='meta'>{_e(judgment.scoring_method)} "
+            "This is a provisional indicator, not a calibrated probability or validated "
+            "measure of political bias. Attributed quotations, sentiment, and emotion are "
+            "not treated as authorial directional evidence.</p>"
+        )
+        parts.append(_section("Overall Bias & Framing Judgment", judgment_html))
+
     # ── Cross-language comparison ────────────────────────────────────────────
     if comparison:
         raw_coverage = comparison.comparison.get("coverage")
@@ -507,6 +674,9 @@ def _build_html(
             ("Snippet-only articles", _e(str(cov.get("snippet_only_articles", "Not reported")))),
             ("Retrieval outcomes", _e(str(cov.get("retrieval_outcomes", "Not reported")))),
         ]
+        wording_basis = comparison.comparison.get("wording_comparison_basis")
+        if wording_basis:
+            comp_rows.append(("Wording comparison basis", _e(str(wording_basis))))
         outcomes = cov.get("verification_outcomes", {})
         for outcome, count in sorted(outcomes.items()):
             comp_rows.append((f"Outcome: {outcome.replace('_', ' ')}", _e(str(count))))
@@ -528,7 +698,7 @@ def _build_html(
                     f"<b>Published:</b> {_e(candidate.published_at or 'Not provided')}<br/>"
                     f"<b>Scope:</b> {_e(candidate.analysis_scope)} &nbsp; "
                     f"<b>Retrieval:</b> {_e(candidate.retrieval_status)}<br/>"
-                    f"<b>URL:</b> {_e(_safe_source_url(candidate.url))}<br/>"
+                    f"<b>URL:</b> {_e(_break_long_token(_safe_source_url(candidate.url)))}<br/>"
                     f"<b>Reasons:</b> {_e(' '.join(candidate.match_reasons) or 'None recorded')}<br/>"
                     f"<b>Uncertainty:</b> {_e(' '.join(candidate.uncertainty) or 'None recorded')}"
                     f"</div>"
@@ -539,48 +709,31 @@ def _build_html(
                 "verified by the configured rules; possible matches remain uncertain.</p>"
             )
 
-        evidence_comparisons = comparison.comparison.get("evidence_comparisons", [])
-        if isinstance(evidence_comparisons, list) and evidence_comparisons:
-            comp_html += "<h3>Verified Full-Text Wording Observations</h3>"
-            for finding in evidence_comparisons:
-                if not isinstance(finding, dict):
-                    continue
-                left = finding.get("original_evidence", {})
-                right = finding.get("candidate_evidence", {})
-                if not isinstance(left, dict) or not isinstance(right, dict):
-                    continue
-                comp_html += (
-                    f"<div class='quote'><b>{_e(str(finding.get('category', 'observable cue')).replace('_', ' ').title())}</b><br/>"
-                    f"<b>Original evidence:</b> &#8220;{_e(left.get('quote', 'Not supplied'))}&#8221; "
-                    f"({_e(str(left.get('occurrences', 'N/A')))} occurrences)<br/>"
-                    f"<b>Compared-article evidence:</b> &#8220;{_e(right.get('quote', 'Not supplied'))}&#8221; "
-                    f"({_e(str(right.get('occurrences', 'N/A')))} occurrences)<br/>"
-                    f"<b>Interpretation:</b> {_e(str(finding.get('interpretation', 'No interpretation supplied.')))}"
-                    f"</div>"
-                )
-
         obs = comparison.comparison.get("observation", "")
         if obs:
             comp_html += f"<p class='meta'>{_e(obs)}</p>"
         for lim in comparison.limitations:
             comp_html += f"<p class='warn'>{_e(lim)}</p>"
-        parts.append(_section("Cross-Language Coverage Comparison", comp_html))
+        parts.append(
+            f"<h2 style='page-break-before: always;'>"
+            f"{_e('Cross-Language Coverage Comparison')}</h2>{comp_html}"
+        )
     else:
         parts.append(_section(
             "Cross-Language Coverage Comparison",
             "<p>No comparison results available. Use the comparison endpoint to discover related coverage.</p>"
         ))
 
-    # ── Rendering limitations ────────────────────────────────────────────────
+    # ── Evidence preservation and rendering ─────────────────────────────────
     render_lims = [
-        "The main report uses PyMuPDF Story and Noto Sans resources; Indic quotations are set again in a shaped evidence appendix when a suitable system font is available.",
-        "On Windows, the appendix uses Nirmala UI. On Linux, install the matching Noto Sans font for the article language. No large font files are included with the project.",
-        "MuPDF's main HTML body does not reliably shape Indic scripts. Exact quotations are preserved in an embedded UTF-8 evidence file. Inspect the shaped appendix before publication.",
-        "If no suitable script font is installed, the appendix is omitted, that limitation is stated, and the exact UTF-8 evidence attachment remains available.",
-        "No model weights are downloaded at report generation time.",
+        "Every evidence quotation is validated against the supplied original text before the report is generated.",
+        "For Indic scripts, the main body identifies the evidence category, cue, offsets, and claim status; exact quotations are rendered in the Original Unicode Evidence appendix.",
+        "An attached UTF-8 evidence file preserves every exact quotation, occurrence offset, and explanation independently of PDF text extraction.",
+        "If a suitable local script font is unavailable, the appendix is omitted and that limitation is stated; the exact UTF-8 attachment remains available.",
+        "Visual rendering depends on the fonts installed on the viewing system. Inspect the appendix before publication.",
     ]
     render_items = "".join(f"<li>{_e(lim)}</li>" for lim in render_lims)
-    parts.append(_section("Report Rendering Notes", f"<ul>{render_items}</ul>"))
+    parts.append(_section("Evidence Preservation and Rendering", f"<ul>{render_items}</ul>"))
 
     body = "\n".join(parts)
     return f"<html><body>{body}</body></html>"

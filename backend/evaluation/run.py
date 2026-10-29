@@ -26,7 +26,12 @@ def _metric(tp: int, fp: int, fn: int) -> dict[str, float | int]:
 
 def evaluate() -> dict:
     fixtures = json.loads(FIXTURES.read_text(encoding="utf-8"))
-    settings = Settings(min_text_chars=10)
+    settings = Settings(
+        min_text_chars=10,
+        sentiment_model_id=None,
+        emotion_model_id=None,
+        ner_model_id=None,
+    )
     detector = LanguageDetector(settings)
     per_language: dict[str, Counter] = defaultdict(Counter)
     feature_availability: Counter = Counter()
@@ -65,7 +70,14 @@ def evaluate() -> dict:
     for case in fixtures["comparison_cases"]:
         try:
             original = analyse_article(case["text"], settings, detector, case["title"])
-            actual, _, _, _ = verify_event(original, case["candidate_title"], case["candidate_text"])
+            # A non-null candidate_text is the fixture's full retrieved text;
+            # a null value represents a snippet-only candidate.
+            actual, _, _, _ = verify_event(
+                original,
+                case["candidate_title"],
+                case["candidate_text"],
+                has_full_text=case.get("candidate_text") is not None,
+            )
             comparison_processed += 1
             outcomes[actual] += 1
             if actual != case["expected"]:

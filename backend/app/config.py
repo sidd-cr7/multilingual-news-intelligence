@@ -13,7 +13,25 @@ class Settings(BaseSettings):
     max_redirects: int = 3
     cors_origins: str = "http://localhost:3000"
     fasttext_model_path: str | None = None
+    sentiment_model_id: str | None = None
+    sentiment_model_path: str | None = None
+    emotion_model_id: str | None = None
+    emotion_model_path: str | None = None
+    ner_model_id: str | None = None
+    ner_model_path: str | None = None
+    ner_model_id_te: str | None = None
+    embedding_model_id: str | None = None
     max_analysis_sentences: int = 500
+    max_model_sentences: int = 32
+    max_model_input_chars: int = 4_000
+    groq_api_key: str | None = None
+    groq_api_key_backup: str | None = None
+    groq_model: str = "openai/gpt-oss-120b"
+    groq_timeout_seconds: float = 45.0
+    groq_max_retries: int = 1
+    groq_max_input_chars: int = 30_000
+    groq_cache_ttl_seconds: int = 1_800
+    groq_cache_max_entries: int = 128
     discovery_result_limit: int = 5
     discovery_timeout_seconds: float = 8.0
 

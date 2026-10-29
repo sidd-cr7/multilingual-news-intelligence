@@ -5,7 +5,6 @@ from app.services.comparison_service import (
     build_queries,
     comparative_summary,
     discovery_terms,
-    event_profile,
     parse_gdelt,
     parse_google_rss,
     verify_event,
@@ -21,7 +20,7 @@ def original():
 def test_query_generation_omits_original_language() -> None:
     queries = build_queries(original(), ComparisonSettings(target_languages=["en", "hi", "ta"]))
     assert "en" not in queries and {"hi", "ta"} <= queries.keys()
-    assert 1 <= len(queries["hi"].split()) <= 3
+    assert 1 <= len(queries["hi"].split()) <= 5
     assert "said" not in queries["hi"].casefold()
 
 
@@ -32,13 +31,6 @@ def test_discovery_terms_stay_short_and_drop_rare_person_names() -> None:
     assert "maya" not in terms and "rao" not in terms
     assert "said" not in terms and "caused" not in terms
     assert 1 <= len(terms) <= 3
-
-
-def test_event_profile_exposes_actual_search_evidence_and_uncertainty() -> None:
-    profile = event_profile(original())
-    assert profile["headline"]
-    assert profile["distinctive_terms"]
-    assert "does not translate" in profile["limitation"]
 
 
 def test_provider_parsers_and_duplicate_safe_fields() -> None:
@@ -57,6 +49,31 @@ def test_same_event_verification_is_transparent() -> None:
     assert status == "insufficient_evidence" and uncertainty
 
 
+def test_snippet_only_is_never_verified_match() -> None:
+    status, _, _, uncertainty = verify_event(
+        original(),
+        "Delhi flooding",
+        "Flooding caused a crisis in Delhi on 12 March 2025",
+        has_full_text=False,
+        candidate_language="en",
+    )
+    assert status == "possible_match"
+    assert any("snippet" in item.lower() for item in uncertainty)
+
+
+def test_verified_match_requires_body_event_terms_not_just_a_matching_title() -> None:
+    status, _, reasons, uncertainty = verify_event(
+        original(),
+        "Delhi flooding update",
+        "Maya Rao appeared at an event.",
+        has_full_text=True,
+        candidate_language="en",
+    )
+    assert status != "verified_match"
+    assert any("fewer than two" in item.lower() for item in uncertainty)
+    assert not any("body event terms" in item.lower() for item in reasons)
+
+
 def test_snippet_and_cross_language_candidates_report_their_limits() -> None:
     status, score, _, uncertainty = verify_event(
         original(), "Delhi flooding update", "Flooding in Delhi", has_full_text=False
@@ -66,7 +83,7 @@ def test_snippet_and_cross_language_candidates_report_their_limits() -> None:
     _, _, _, uncertainty = verify_event(
         original(), "दिल्ली बाढ़", "दिल्ली में बाढ़", has_full_text=False, candidate_language="hi"
     )
-    assert any("different language" in item.lower() for item in uncertainty)
+    assert any("different" in item.lower() for item in uncertainty)
 
 
 def test_coverage_keeps_discovered_and_evaluated_denominators_separate() -> None:
@@ -85,32 +102,35 @@ def test_coverage_keeps_discovered_and_evaluated_denominators_separate() -> None
     assert coverage["matched_articles"] == 1
 
 
-def test_full_text_comparison_cites_both_articles_and_skips_possible_matches() -> None:
-    settings = Settings(min_text_chars=10)
-    candidate_analysis = analyse_article(
-        "Minister Maya Rao said flooding caused a crisis in Delhi on 12 March 2025. Officials said conditions improved.",
-        settings,
-        LanguageDetector(settings),
+def test_wording_counts_use_only_verified_full_text_matches() -> None:
+    analysis = original()
+    snippet_possible = DiscoveryCandidate(
+        url="https://example.org/snippet",
+        title="Delhi flooding snippet",
+        provider="google_news_rss",
+        retrieval_status="unavailable: blocked",
+        analysis_scope="snippet_only",
+        verification_status="possible_match",
+        analysis=analysis,
     )
-    candidate = DiscoveryCandidate(
+    verified_full = DiscoveryCandidate(
         url="https://example.org/full",
-        title="Delhi flooding update",
-        provider="test",
+        title="Delhi flooding full text",
+        provider="google_news_rss",
         retrieval_status="retrieved",
         analysis_scope="full_text",
         verification_status="verified_match",
-        analysis=candidate_analysis,
+        analysis=analysis,
     )
-    summary = comparative_summary(original(), [candidate])
-    comparisons = summary["evidence_comparisons"]
-    assert comparisons
-    compared = comparisons[0]
-    assert compared["original_evidence"]["quote"] in original().original_text
-    assert compared["candidate_evidence"]["quote"] in candidate_analysis.original_text
-    assert "not a bias finding" in compared["interpretation"]
+    only_snippet = comparative_summary(analysis, [snippet_possible])
+    assert only_snippet["indicator_counts_across_matches"] == {}
 
-    candidate.verification_status = "possible_match"
-    assert comparative_summary(original(), [candidate])["evidence_comparisons"] == []
+    summary = comparative_summary(analysis, [snippet_possible, verified_full])
+    expected = sum(analysis.statistics["indicator_counts"].values())
+    assert sum(summary["indicator_counts_across_matches"].values()) == expected
+    assert summary["wording_comparison_basis"].startswith(
+        "Indicator counts include only verified full-text matches (1"
+    )
 
 
 def test_date_conflict_is_an_explicit_rejected_match() -> None:

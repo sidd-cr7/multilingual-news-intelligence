@@ -37,7 +37,6 @@ class ArticleMetadata(BaseModel):
     input_method: InputMethod
     original_url: str | None = None
     title: str | None = None
-    title_source: str | None = None
     language: LanguageResult
     extracted_text: str
     character_count: int
@@ -59,6 +58,8 @@ class TaskAvailability(BaseModel):
     method: str | None = None
     supported_languages: list[str] = Field(default_factory=list)
     limitation: str | None = None
+    model_identifier: str | None = None
+    fallback: str | None = None
 
 
 class EvidenceSpan(BaseModel):
@@ -83,6 +84,13 @@ class EvidenceSpan(BaseModel):
     occurrence_spans: list[tuple[int, int]] = Field(default_factory=list)
     contexts: list[str] = Field(default_factory=list)
     evidence_strength: str | None = None
+    # Claim status describes the anchor sentence, not the truth of the claim.
+    # "attributed" means a configured reporting/attribution marker appears in
+    # that sentence; "unattributed" means none was found. "attribution_marker"
+    # marks the attribution finding itself. "mixed" is used when a repeated cue
+    # appears in sentences with different attribution contexts.
+    claim_status: str | None = None
+    claim_status_note: str | None = None
 
 
 class Entity(BaseModel):
@@ -101,12 +109,97 @@ class SentenceSentiment(BaseModel):
     label: str
     score: float | None = None
     method: str
+    model_identifier: str | None = None
+    class_scores: dict[str, float] = Field(default_factory=dict)
+    uncertainty: str | None = None
+
+
+class FramingFinding(BaseModel):
+    id: str
+    category: str
+    label: str
+    actor: str | None = None
+    speaker: str | None = None
+    attribution_type: str
+    framing_direction: str
+    evidence_text: str
+    start_offset: int = Field(ge=0)
+    end_offset: int = Field(ge=0)
+    explanation: str
+    contextual_interpretation: str = ""
+    potential_reader_effect: str
+    evidence_strength: str
+    alternative_interpretation: str
+    method: str
+    uncertainty: str
+    confidence: float | None = Field(default=None, ge=0, le=1)
+
+
+class ActorPortrayal(BaseModel):
+    actor: str
+    direction: str
+    finding_ids: list[str] = Field(default_factory=list)
+    explanation: str
+
+
+class BiasAssessment(BaseModel):
+    status: str = "not_configured"
+    provider: str | None = None
+    model: str | None = None
+    groq_used: bool = False
+    cache_hit: bool = False
+    error_code: str | None = None
+    emotion_fallback: dict | None = None
+    sentiment_fallback: dict | None = None
+    analysis_scope: str = "full_article"
+    neutral_rewrite: str | None = None
+    conclusion: str
+    summary: str
+    strongest_patterns: list[str] = Field(default_factory=list)
+    actor_portrayals: list[ActorPortrayal] = Field(default_factory=list)
+    competing_attributed_viewpoints: bool | None = None
+    representation_comparison: str
+    selective_presentation: str
+    sufficient_evidence_for_overall_assessment: bool
+    findings: list[FramingFinding] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+
+
+class BiasJudgmentEvidence(BaseModel):
+    evidence_text: str
+    start_offset: int = Field(ge=0)
+    end_offset: int = Field(ge=0)
+    category: str
+    label: str
+    actor: str | None = None
+    speaker: str | None = None
+    attribution_type: str
+    framing_direction: str
+    explanation: str
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    method: str
+
+
+class BiasJudgment(BaseModel):
+    status: str
+    summary: str
+    indicator: int | None = Field(default=None, ge=0, le=100)
+    indicator_label: str
+    direction: str
+    targets: list[ActorPortrayal] = Field(default_factory=list)
+    reasons: list[BiasJudgmentEvidence] = Field(default_factory=list)
+    validated_auxiliary_cues: list[dict] = Field(default_factory=list)
+    sentiment_signal: dict = Field(default_factory=dict)
+    emotion_signal: dict = Field(default_factory=dict)
+    entity_mentions: list[dict] = Field(default_factory=list)
+    evidence_sufficiency: str
+    scoring_method: str
+    limitations: list[str] = Field(default_factory=list)
 
 
 class ArticleAnalysisResponse(BaseModel):
     analysis_id: str
     title: str | None = None
-    title_source: str | None = None
     original_url: str | None = None
     original_text: str
     language: LanguageResult
@@ -114,10 +207,19 @@ class ArticleAnalysisResponse(BaseModel):
     entities: list[Entity]
     sentiment: dict
     emotion: dict
-    framing_analysis: dict = Field(default_factory=dict)
-    summary: dict = Field(default_factory=lambda: {"status": "unavailable", "method": None, "text": None, "limitation": "No summary was supplied."})
     indicators: list[EvidenceSpan]
+    bias_assessment: BiasAssessment = Field(
+        default_factory=lambda: BiasAssessment(
+            conclusion="Insufficient evidence for an overall assessment.",
+            summary="No article-level framing assessment was provided.",
+            representation_comparison="Not assessed.",
+            selective_presentation="Not assessed.",
+            sufficient_evidence_for_overall_assessment=False,
+        )
+    )
+    overall_judgment: BiasJudgment | None = None
     statistics: dict
+    methodology: dict = Field(default_factory=dict)
     task_availability: list[TaskAvailability]
     limitations: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
@@ -150,11 +252,24 @@ class DiscoveryCandidate(BaseModel):
     analysis: ArticleAnalysisResponse | None = None
 
 
+class FramingDifference(BaseModel):
+    """One observable framing difference between two articles."""
+    dimension: str
+    article_a_quote: str | None = None
+    article_b_quote: str | None = None
+    explanation: str
+    significance: str | None = None
+    confidence: str | None = None
+    alternative_interpretation: str | None = None
+
+
 class ComparisonResponse(BaseModel):
     original_analysis: ArticleAnalysisResponse
+    event_profile: dict | None = None
     discovery_queries: dict[str, str]
     candidates: list[DiscoveryCandidate]
     comparison: dict
+    framing_differences: list[FramingDifference] = Field(default_factory=list)
     provider_failures: list[str] = Field(default_factory=list)
     provider_status: dict[str, str] = Field(default_factory=dict)
     limitations: list[str] = Field(default_factory=list)

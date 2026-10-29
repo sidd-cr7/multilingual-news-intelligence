@@ -173,6 +173,17 @@ def test_no_comparison_section_says_unavailable():
     assert "No comparison results available" in full_text
 
 
+def test_report_includes_overall_judgment_and_insufficient_evidence_state():
+    result = _analysis("Officials said the shocking crisis was caused by poor planning.")
+    pdf = generate_pdf_report_with_footer(result)
+    doc = pymupdf.open(stream=pdf, filetype="pdf")
+    full_text = re.sub(r"\s+", " ", "".join(page.get_text() for page in doc))
+    doc.close()
+    assert "Overall Bias & Framing Judgment" in full_text
+    assert "Insufficient evidence for a score" in full_text
+    assert "not a calibrated probability or validated measure" in full_text
+
+
 def test_report_with_comparison_results_is_included_without_live_retrieval():
     result = _analysis("Officials said the shocking crisis was caused by poor planning.")
     analysis_resp = client.post(
@@ -212,6 +223,35 @@ def test_report_with_comparison_results_is_included_without_live_retrieval():
     assert "Cross-Language Coverage Comparison" in full_text
     assert "Coverage is bounded." in full_text
     assert result.original_text == analysis_data["original_text"]
+
+
+def test_long_candidate_url_is_wrapped_not_clipped():
+    """A single opaque token wider than the column was silently clipped by Story."""
+    from app.schemas.article import ComparisonResponse, DiscoveryCandidate
+
+    result = _analysis("Officials said the shocking crisis was caused by poor planning.")
+    url = "https://news.google.com/rss/articles/" + "CBMiA" * 30
+    candidate = DiscoveryCandidate(
+        url=url,
+        title="Delhi flooding",
+        provider="google_news_rss",
+        retrieval_status="unavailable: blocked",
+        analysis_scope="snippet_only",
+        verification_status="possible_match",
+    )
+    comparison = ComparisonResponse(
+        original_analysis=result,
+        discovery_queries={"hi": "delhi flood"},
+        candidates=[candidate],
+        comparison={"coverage": {}, "observation": "bounded"},
+    )
+    pdf = generate_pdf_report_with_footer(result, comparison)
+    doc = pymupdf.open(stream=pdf, filetype="pdf")
+    text = "".join(page.get_text() for page in doc)
+    doc.close()
+    # Break opportunities may appear as zero-width or extracted whitespace.
+    compact = "".join(text.replace("\u200b", "").split())
+    assert url in compact
 
 
 def test_report_preserves_exact_utf8_when_script_font_is_unavailable(monkeypatch):
@@ -351,7 +391,7 @@ def test_api_report_pdf_is_parseable():
     doc.close()
 
 
-def test_pdf_metadata_and_extractive_summary_are_explicit():
+def test_pdf_metadata_summary_and_methodology_are_explicit():
     result = _analysis("Officials said the shocking crisis was caused by poor planning.")
     pdf = generate_pdf_report_with_footer(result)
     doc = pymupdf.open(stream=pdf, filetype="pdf")
@@ -359,7 +399,11 @@ def test_pdf_metadata_and_extractive_summary_are_explicit():
     metadata = doc.metadata
     doc.close()
     assert metadata["title"] == "Multilingual News Intelligence Research Report"
-    assert "extractive opening-sentence baseline" in text.casefold()
+    assert "Executive Summary" in text
+    assert "distinct observable findings" in text
+    assert "Methodology and Indicator Definitions" in text
+    assert "Loaded or evaluative language" in text
+    assert "Claim-status definitions" in text
     assert "Publication" in text and "date" in text
 
 
@@ -427,6 +471,7 @@ def test_report_states_findings_occurrences_and_denominators():
     text = re.sub(r"\s+", " ", "".join(page.get_text() for page in document))
     attachment = document.embfile_get("research-report-evidence.txt").decode("utf-8")
     document.close()
+    assert "Claim status:" in text
     assert "Distinct evidence findings" in text
     assert "Total cue occurrences" in text
     assert "Denominator: whitespace tokens" in text
@@ -490,7 +535,7 @@ def test_report_tail_sections_are_not_dropped_by_pagination():
         "Methodological Limitations",
         "Cross-Language Coverage Comparison",
         "No comparison results available",
-        "Report Rendering Notes",
+        "Evidence Preservation and Rendering",
     ):
         assert heading in text, f"Missing report section: {heading}"
 

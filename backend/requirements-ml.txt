@@ -1,0 +1,5 @@
+# Optional CPU inference runtime. Review model licenses and dataset terms.
+# The application never downloads weights; inference uses the local cache or a configured local path.
+torch>=2.6,<3
+transformers>=4.46,<6
+psutil>=5.9,<8

@@ -91,6 +91,17 @@ test("overlapping cues are highlighted once without losing later spans", () => {
   );
 });
 
+test("prefers the longer framing passage when two spans share a start", () => {
+  const ranges = highlightRanges(
+    [
+      { quote: "All", start: 0, end: 3 },
+      { quote: "All residents", start: 0, end: 13 },
+    ],
+    "All residents supported the proposal.",
+  );
+  assert.deepEqual(ranges.map((range) => range.key), ["0-13"]);
+});
+
 test("falls back to the anchor when occurrence spans are absent", () => {
   const ranges = highlightRanges([{ quote: "plan", start: planStart, end: planStart + 4 }], text);
   assert.deepEqual(ranges.map((range) => range.key), [`${planStart}-${planStart + 4}`]);

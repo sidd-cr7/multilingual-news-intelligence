@@ -53,9 +53,14 @@ def test_phase_three_categories_and_normalised_report() -> None:
     text = "Everyone said the shocking plan may fail. The plan was caused by poor planning."
     result = analyse_article(text, settings, LanguageDetector(settings))
     categories = {item.category for item in result.indicators}
-    assert {"attributed_claim", "hedging_or_qualification", "absolutist_or_generalising_language", "unattributed_assertion_candidate"} <= categories
+    assert {"attributed_claim", "hedging_or_qualification", "absolutist_or_generalising_language"} <= categories
+    assert "unattributed_assertion_candidate" not in categories
+    assert "potentially_one_sided_framing_cue" not in categories
     assert result.statistics["evidence_density_per_1000_tokens"] is not None
     assert result.statistics["indicator_counts"]["attributed_claim"] == 1
+    assert all(item.claim_status for item in result.indicators)
+    assert result.methodology["categories"]
+    assert result.statistics["attribution_summary"]["denominator"]
 
 
 def test_repeated_and_overlapping_evidence_remains_valid() -> None:
@@ -99,12 +104,17 @@ def test_evidence_spans_are_specific_rather_than_whole_sentences() -> None:
     assert len(pairs) == len(set(pairs))
 
 
-def test_sentence_level_rule_anchors_on_the_predicate() -> None:
+def test_claim_status_replaces_duplicate_sentence_rules() -> None:
     settings = Settings(min_text_chars=10)
     result = analyse_article("The shocking failure was caused by corruption.", settings, LanguageDetector(settings))
-    assertions = [item for item in result.indicators if item.category == "unattributed_assertion_candidate"]
-    assert assertions
-    assert all(item.quote == "was" for item in assertions)
+    categories = [item.category for item in result.indicators]
+    # The same evaluative word must not be reported under two interpretations.
+    assert "potentially_one_sided_framing_cue" not in categories
+    assert "unattributed_assertion_candidate" not in categories
+    pairs = [(item.category, item.start, item.end) for item in result.indicators]
+    assert len(pairs) == len(set(pairs))
+    assert all(item.claim_status in {"attributed", "unattributed", "attribution_marker", "mixed"} for item in result.indicators)
+    assert all(item.claim_status_note for item in result.indicators)
 
 
 def test_evidence_carries_context_and_strength() -> None:
@@ -116,77 +126,6 @@ def test_evidence_carries_context_and_strength() -> None:
         assert item.contexts and item.contexts[0] in result.original_text
         assert item.evidence_strength
         assert item.occurrences >= 1
-
-
-def test_title_summary_sentiment_emotion_and_entities_are_meaningful_but_scoped() -> None:
-    settings = Settings(min_text_chars=10)
-    text = "Dr. Maya Rao said the severe attack caused damage. The community welcomed relief and celebrated the successful response."
-    result = analyse_article(text, settings, LanguageDetector(settings))
-    assert result.title.startswith("Dr. Maya Rao said")
-    assert result.title_source == "inferred-opening-text"
-    assert result.summary["status"] == "available" and "Maya Rao" in result.summary["text"]
-    assert result.sentiment["positive_cues"] > 0 and result.sentiment["negative_cues"] > 0
-    assert result.emotion["status"] == "available" and result.emotion["distribution"]["joy"] > 0
-    assert any(entity.text == "Maya Rao" and entity.label == "PERSON_CANDIDATE" for entity in result.entities)
-
-
-def test_capitalised_events_are_not_person_candidates() -> None:
-    settings = Settings(min_text_chars=10)
-    result = analyse_article("Friendship Day and Education Policy were discussed in the public meeting.", settings, LanguageDetector(settings))
-    assert not any(entity.label == "PERSON_CANDIDATE" for entity in result.entities)
-
-
-@pytest.mark.parametrize(("text", "language", "emotion"), [
-    ("The angry crowd expressed outrage after the decision.", "en", "anger"),
-    ("लोगों में डर और गुस्सा था, लेकिन यह केवल एक रिपोर्ट है।", "hi", "fear"),
-    ("ಜನರಲ್ಲಿ ಭಯ ಮತ್ತು ಕೋಪ ಇತ್ತು ಎಂದು ವರದಿ ತಿಳಿಸಿದೆ.", "kn", "fear"),
-    ("ప్రజల్లో భయం మరియు కోపం ఉందని నివేదిక తెలిపింది.", "te", "fear"),
-    ("மக்களிடம் பயம் மற்றும் கோபம் இருந்ததாக அறிக்கை தெரிவித்தது.", "ta", "fear"),
-])
-def test_emotion_evidence_is_language_scoped_and_offset_valid(text: str, language: str, emotion: str) -> None:
-    result = analyse_article(text, Settings(min_text_chars=10), LanguageDetector(Settings(min_text_chars=10)))
-    assert result.language.code == language
-    assert result.emotion["status"] == "available"
-    assert result.emotion["distribution"][emotion] >= 1
-    assert all(result.original_text[item["start"]:item["end"]] == item["quote"] for item in result.emotion["evidence"])
-
-
-def test_emotion_neutral_and_framing_assessment_do_not_fabricate_conclusions() -> None:
-    result = analyse_article("The council met on Tuesday and published the minutes on its website.", Settings(min_text_chars=10), LanguageDetector(Settings(min_text_chars=10)))
-    assert result.emotion["dominant_emotion"] == "neutral"
-    assert result.emotion["evidence"] == []
-    assert result.framing_analysis["findings"] == []
-    assert "No reliable overall framing conclusion" in result.framing_analysis["overall_assessment"]
-
-
-def test_framing_analysis_cites_loaded_wording_with_an_alternative_interpretation() -> None:
-    result = analyse_article("The shocking decision was a brutal failure, officials said.", Settings(min_text_chars=10), LanguageDetector(Settings(min_text_chars=10)))
-    findings = result.framing_analysis["findings"]
-    assert findings
-    assert all(result.original_text[item["start_offset"]:item["end_offset"]] == item["evidence_text"] for item in findings)
-    assert all(item["alternative_interpretation"] for item in findings)
-
-
-def test_claim_status_markers_preserve_the_difference_between_allegation_and_fact() -> None:
-    settings = Settings(min_text_chars=10)
-    text = "Police alleged that Maya was responsible. Maya denied the allegation and argued the account was incomplete."
-    result = analyse_article(text, settings, LanguageDetector(settings))
-    categories = {item.category for item in result.indicators}
-    assert {"allegation_or_accusation", "explicitly_disputed_claim", "opinion_or_interpretation_marker"} <= categories
-    assert all(result.original_text[item.start:item.end] == item.quote for item in result.indicators)
-    allegation = next(item for item in result.indicators if item.category == "allegation_or_accusation")
-    assert "rather than an established fact" in allegation.explanation
-
-
-def test_source_representation_is_sentence_descriptive_not_a_source_count() -> None:
-    settings = Settings(min_text_chars=10)
-    result = analyse_article("Maya said the proposal may change. Ravi said the plan was shocking.", settings, LanguageDetector(settings))
-    source = result.statistics["source_representation"]
-    assert source["attribution_marker_occurrences"] == 2
-    assert source["sentences_with_attribution_markers"] == 2
-    assert "do not identify unique sources" in source["interpretation"]
-    availability = next(task for task in result.task_availability if task.task == "source_representation")
-    assert availability.status == "partial"
 
 
 def test_statistics_separate_findings_from_occurrences() -> None:
@@ -237,13 +176,59 @@ def test_phase_three_api_keeps_existing_response_sections() -> None:
     ("\u0b87\u0ba4\u0bc1 \u0baa\u0bcb\u0ba4\u0bc1\u0bae\u0bbe\u0ba9 \u0ba8\u0bc0\u0bb3\u0bae\u0bbe\u0ba9 \u0ba4\u0bae\u0bbf\u0bb4\u0bcd \u0b9a\u0bc6\u0baf\u0bcd\u0ba4\u0bbf \u0b85\u0bb1\u0bbf\u0b95\u0bcd\u0b95\u0bc8 \u0bb5\u0bbf\u0bb5\u0bb0\u0bbf\u0b95\u0bcd\u0b95\u0bbf\u0bb1\u0ba4\u0bc1.", "ta"),
 ])
 def test_phase_three_availability_covers_target_languages(text: str, code: str) -> None:
-    settings = Settings(min_text_chars=10)
+    settings = Settings(
+        min_text_chars=10,
+        sentiment_model_id=None,
+        emotion_model_id=None,
+        ner_model_id=None,
+    )
     result = analyse_article(text, settings, LanguageDetector(settings))
     assert result.language.code == code
-    assert any(task.task == "bias_indicator_engine" and task.status == "available" for task in result.task_availability)
+    availability = next(task for task in result.task_availability if task.task == "auxiliary_keyword_indicators")
+    assert availability.status == "available_with_limitations"
+    assert availability.supported_languages == ["en", "hi", "kn", "te", "ta"]
+    tasks = {task.task: task for task in result.task_availability}
+    assert tasks["language_identification"].status == "available_with_limitations"
+    assert tasks["sentiment"].status == ("not_configured" if code in {"en", "hi"} else "unsupported")
+    assert tasks["emotion"].status == ("not_configured" if code == "en" else "unsupported")
+    assert tasks["contextual_framing"].status == "not_configured"
+    assert tasks["sarcasm_analysis"].status == "unsupported"
+    assert tasks["cross_language_semantic_matching"].status == "not_configured"
 
 
 def test_invalid_evidence_is_rejected() -> None:
     invalid = EvidenceSpan(category="test", quote="wrong", start=0, end=5, context="", explanation="", method="rule-based")
     with pytest.raises(ValueError, match="invalid evidence"):
         _validated_evidence("right", [invalid])
+
+
+def test_model_metadata_is_explicit_and_honest() -> None:
+    settings = Settings(min_text_chars=10)
+    result = analyse_article("This is a sufficiently long English sentence to analyse.", settings, LanguageDetector(settings))
+    assert result.sentiment["status"] == "not_configured"
+    assert result.sentiment["label"] is None
+    assert result.sentiment["model_identifier"] is None
+    assert any(task.task == "sentiment" and task.status == "not_configured" for task in result.task_availability)
+
+
+def test_embedding_configuration_is_not_mistaken_for_running_similarity() -> None:
+    settings = Settings(
+        min_text_chars=10,
+        embedding_model_id="sentence-transformers/LaBSE",
+        sentiment_model_id=None,
+        emotion_model_id=None,
+        ner_model_id=None,
+    )
+    result = analyse_article("This is a sufficiently long English article for analysis.", settings, LanguageDetector(settings))
+    task = next(item for item in result.task_availability if item.task == "cross_language_semantic_matching")
+
+    assert task.status == "inconclusive"
+    assert "does not load or run" in task.limitation
+
+
+def test_unicode_sentence_segmentation_preserves_original_offsets() -> None:
+    settings = Settings(min_text_chars=10)
+    text = "Dr. Maya Rao said the shocking crisis was caused by poor planning. यह एक लंबा हिंदी वाक्य है।"
+    result = analyse_article(text, settings, LanguageDetector(settings))
+    assert result.indicators
+    assert all(item.quote == text[item.start:item.end] for item in result.indicators)
